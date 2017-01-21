@@ -15,6 +15,8 @@ use hyper::Client;
 use classifier::NaiveBayes;
 use std::thread;
 use std::sync::mpsc;
+use std::fs::File;
+use std::io::Write;
 
 #[derive(RustcEncodable, RustcDecodable)]
 struct Greeting {
@@ -93,14 +95,30 @@ fn main() {
             nb.add_document(&document.to_string(), &label.to_string());
         }
         nb.train();
-        let js = nb.to_json();
-        let mut nb2 = NaiveBayes::from_json(&js);
+        let trained_content = nb.to_json();
+
+        match File::create("foo.txt") {
+            Ok(mut f) => {
+                f.write_all(trained_content.as_bytes());
+            }
+            Err(err) => panic!("Unable to open file!")
+        };
+
+        let mut s = String::new();
+        match File::open("foo.txt") {
+            Ok(mut f) => {
+                f.read_to_string(&mut s)
+            }
+            Err(err) => panic!("Unable to open file!")
+        };
+
+        let mut nb2 = NaiveBayes::from_json(&s);
         let food_document = "salami pancetta beef ribs".to_string();
         let greeting = Greeting {msg: nb2.classify(&food_document)};
         let payload = json::encode(&greeting).unwrap();
         Ok(Response::with((status::Ok, payload)))
     }
-    
+
     Iron::new(router).http("localhost:3000").unwrap();
     println!("On 3000");
 }
