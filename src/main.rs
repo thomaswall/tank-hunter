@@ -4,6 +4,7 @@ extern crate rustc_serialize;
 extern crate hyper;
 extern crate crossbeam;
 extern crate classifier;
+extern crate lettre;
 
 use iron::prelude::*;
 use iron::status;
@@ -17,6 +18,9 @@ use std::thread;
 use std::sync::mpsc;
 use std::fs::File;
 use std::io::Write;
+use lettre::transport::smtp::{SmtpTransport, SmtpTransportBuilder};
+use lettre::email::EmailBuilder;
+use lettre::transport::EmailTransport;
 
 #[derive(RustcEncodable, RustcDecodable)]
 struct Greeting {
@@ -121,4 +125,20 @@ fn main() {
 
     Iron::new(router).http("localhost:3000").unwrap();
     println!("On 3000");
+
+    let email = EmailBuilder::new()
+                    .to(("aricedrums@gmail.com", "Alan Rice"))
+                    .from("user@tank-hunter.com")
+                    .subject("this is a test!!!!!")
+                    .body("sup dog")
+                    .build()
+                    .unwrap();
+
+    let mut mailer = SmtpTransportBuilder::localhost().unwrap().build();
+
+    let result = mailer.send(email);
+
+    assert!(result.is_ok());
+
+
 }
