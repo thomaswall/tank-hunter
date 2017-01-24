@@ -4,7 +4,7 @@ extern crate rustc_serialize;
 extern crate hyper;
 extern crate crossbeam;
 extern crate classifier;
-extern crate lettre;
+extern crate select;
 
 use iron::prelude::*;
 use iron::status;
@@ -18,9 +18,8 @@ use std::thread;
 use std::sync::mpsc;
 use std::fs::File;
 use std::io::Write;
-use lettre::transport::smtp::{SmtpTransport, SmtpTransportBuilder};
-use lettre::email::EmailBuilder;
-use lettre::transport::EmailTransport;
+use select::document::Document;
+use select::predicate::{Predicate, Attr, Class, Name};
 
 #[derive(RustcEncodable, RustcDecodable)]
 struct Greeting {
@@ -41,8 +40,10 @@ fn main() {
 
     router.get("/", move |r: &mut Request| hello_world(r, &greeting.lock().unwrap()), "index");
     router.post("/set", move |r: &mut Request| set_greeting(r, &mut greeting_clone.lock().unwrap()), "set");
-    router.get("/web", move |r: &mut Request| webber(r, &client), "webber");
+    //router.get("/web", move |r: &mut Request| webber(r, &client), "webber");
     router.get("/learn", move |r: &mut Request| learn(r), "learn");
+    router.get("/parseit", move |r: &mut Request| parse_it(r, &client), "parse");
+
 
     fn hello_world(_ : &mut Request, greeting: &Greeting) -> IronResult<Response> {
         let payload = json::encode(&greeting).unwrap();
@@ -54,6 +55,28 @@ fn main() {
         request.body.read_to_string(&mut payload).unwrap();
         *greeting = json::decode(&payload).unwrap();
         Ok(Response::with((status::Ok, payload)))
+    }
+
+    fn parse_it(_: &mut Request, c: & Client) -> IronResult<Response> {
+        let mut res = c.get("http://streeteasy.com/for-rent/nyc/price:3500-4500%7Carea:115,116,107,105,157,364,322,304%7Cbeds:2%7Cinterestingatint%3E1469787712").send().unwrap();
+        assert_eq!(res.status, hyper::Ok);
+
+        let mut hrefs : Vec<String> = Vec::new();
+
+        let mut s = String::new();
+        res.read_to_string(&mut s).unwrap();
+
+        let document = Document::from(&*s);
+
+        for node in document.find(Class("details-title")).iter() {
+            let a = node.find(Name("a")).first().unwrap().attr("href").unwrap().to_string();
+            hrefs.push(a);
+        }
+
+        let greeting = Greetings { allMsgs: &hrefs };
+        let payload = json::encode(&greeting).unwrap();
+        Ok(Response::with((status::Ok, payload)))
+
     }
 
     fn webber(_: & mut Request, c: & Client) -> IronResult<Response> {
@@ -125,20 +148,6 @@ fn main() {
 
     Iron::new(router).http("localhost:3000").unwrap();
     println!("On 3000");
-
-    let email = EmailBuilder::new()
-                    .to(("aricedrums@gmail.com", "Alan Rice"))
-                    .from("user@tank-hunter.com")
-                    .subject("this is a test!!!!!")
-                    .body("sup dog")
-                    .build()
-                    .unwrap();
-
-    let mut mailer = SmtpTransportBuilder::localhost().unwrap().build();
-
-    let result = mailer.send(email);
-
-    assert!(result.is_ok());
 
 
 }
