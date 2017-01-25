@@ -5,6 +5,7 @@ extern crate hyper;
 extern crate crossbeam;
 extern crate classifier;
 extern crate select;
+extern crate time;
 
 use iron::prelude::*;
 use iron::status;
@@ -59,7 +60,14 @@ fn main() {
     }
 
     fn parse_it(_: &mut Request, c: & Client) -> IronResult<Response> {
-        let mut res = c.get("http://streeteasy.com/for-rent/nyc/price:3500-4500%7Carea:115,116,107,105,157,364,322,304%7Cbeds:2%7Cinterestingatint%3E1469787712").send().unwrap();
+        let current_time = time::get_time().sec;
+        let one_day = 86164;
+        let yesterday = (current_time - one_day).to_string();
+
+        let mut url = "http://streeteasy.com/for-rent/nyc/price:3500-4500%7Carea:115,116,107,105,157,364,322,304%7Cbeds:2%7Cinterestingatint%3E".to_string();
+        url.push_str(&*yesterday);
+
+        let mut res = c.get(&*url).send().unwrap();
         assert_eq!(res.status, hyper::Ok);
 
         let mut hrefs : Vec<String> = Vec::new();
@@ -72,6 +80,10 @@ fn main() {
         for node in document.find(Class("details-title")).iter() {
             let a = node.find(Name("a")).first().unwrap().attr("href").unwrap().to_string();
             hrefs.push(a);
+        }
+
+        for link in &hrefs {
+            println!("{}", link);
         }
 
         let results = webber(c, hrefs);
