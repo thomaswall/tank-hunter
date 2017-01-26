@@ -27,6 +27,15 @@ struct Greeting {
     msg: String
 }
 
+#[derive(RustcEncodable, RustcDecodable)]
+struct ApartmentUrl {
+    url: String,
+    label: String
+}
+
+unsafe impl Send for ApartmentUrl {}
+unsafe impl Sync for ApartmentUrl {}
+
 #[derive(RustcEncodable)]
 struct Greetings<'a> {
     allMsgs: &'a Vec<String>
@@ -39,11 +48,47 @@ fn main() {
     let greeting_clone = greeting.clone();
     let client = Client::new();
 
+    let mut model = String::new();
+    let mut nb = Arc::new(Mutex::new(NaiveBayes::new()));
+    match File::open("foo.txt") {
+        Ok(mut f) => {
+            f.read_to_string(&mut model);
+            nb = Arc::new(Mutex::new(NaiveBayes::from_json(&model)));
+        }
+        Err(err) => {
+            nb = Arc::new(Mutex::new(NaiveBayes::new()));
+        }
+    };
+
+    let (tx, rx) = mpsc::channel();
+    let atx = Arc::new(Mutex::new(tx));
+    let nb2 = nb.clone();
+
+    thread::spawn(move || {
+        while true {
+            let update : ApartmentUrl = rx.recv().unwrap();
+            let mut nb2 = nb2.lock().unwrap();
+            nb2.add_document(&update.url.to_string(), &update.label.to_string());
+            nb2.train();
+
+            let trained_content = nb2.to_json();
+
+            match File::create("foo.txt") {
+                Ok(mut f) => {
+                    f.write_all(trained_content.as_bytes());
+                }
+                Err(err) => panic!("Unable to open file!")
+            };
+        }
+    });
+
+    let nb3 = nb.clone();
 
     router.get("/", move |r: &mut Request| hello_world(r, &greeting.lock().unwrap()), "index");
     router.post("/set", move |r: &mut Request| set_greeting(r, &mut greeting_clone.lock().unwrap()), "set");
     router.get("/learn", move |r: &mut Request| learn(r), "learn");
-    router.get("/parseit", move |r: &mut Request| parse_it(r, &client), "parse");
+    router.post("/train", move |r: &mut Request| train(r, &atx), "train");
+    router.get("/parseit", move |r: &mut Request| parse_it(r, &client, &nb3), "parse");
 
 
     fn hello_world(_ : &mut Request, greeting: &Greeting) -> IronResult<Response> {
@@ -58,7 +103,7 @@ fn main() {
         Ok(Response::with((status::Ok, payload)))
     }
 
-    fn parse_it(_: &mut Request, c: & Client) -> IronResult<Response> {
+    fn parse_it(_: &mut Request, c: & Client, nb : & Arc<Mutex<NaiveBayes>>) -> IronResult<Response> {
         let mut res = c.get("http://streeteasy.com/for-rent/nyc/price:3500-4500%7Carea:115,116,107,105,157,364,322,304%7Cbeds:2%7Cinterestingatint%3E1469787712").send().unwrap();
         assert_eq!(res.status, hyper::Ok);
 
@@ -74,7 +119,8 @@ fn main() {
             hrefs.push(a);
         }
 
-        let results = webber(c, hrefs);
+        let nb = nb.lock().unwrap();
+        let results = webber(c, hrefs, &nb);
 
         let greeting = Greetings { allMsgs: &results };
         let payload = json::encode(&greeting).unwrap();
@@ -82,16 +128,7 @@ fn main() {
 
     }
 
-    fn webber(c: & Client, apartments: Vec<String>) -> Vec<String> {
-        let mut s = String::new();
-        match File::open("foo.txt") {
-            Ok(mut f) => {
-                f.read_to_string(&mut s)
-            }
-            Err(err) => panic!("Unable to open file!")
-        };
-
-        let mut nb = NaiveBayes::from_json(&s);
+    fn webber(c: & Client, apartments: Vec<String>, nb : & NaiveBayes) -> Vec<String> {
 
         let (tx, rx) = mpsc::channel();
         for apt in apartments.clone() {
@@ -107,7 +144,7 @@ fn main() {
         let mut data : Vec<String> = Vec::new();
         for apt in apartments.clone() {
             let verified = rx.recv().unwrap();
-            if(verified == "true") {
+            if verified == "true" {
                 let url = Url::parse("http://streeteasy.com").unwrap();
                 let url = url.join(&*apt).unwrap().as_str().to_string();
                 data.push(url);
@@ -132,6 +169,17 @@ fn main() {
         let body = block.find(Name("blockquote")).first().unwrap().text();
 
         return nb.classify(&s);
+    }
+
+    fn train(request: &mut Request, atx: & Arc<Mutex<std::sync::mpsc::Sender<ApartmentUrl>>>) -> IronResult<Response> {
+        let mut payload = String::new();
+        request.body.read_to_string(&mut payload).unwrap();
+        let request: ApartmentUrl = json::decode(&payload).unwrap();
+        atx.lock().unwrap().send(request).unwrap();
+
+        let greeting = Greeting {msg: "success".to_string()};
+        let payload = json::encode(&greeting).unwrap();
+        Ok(Response::with((status::Ok, payload)))
     }
 
 
