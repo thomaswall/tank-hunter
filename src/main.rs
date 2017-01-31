@@ -5,6 +5,7 @@ extern crate hyper;
 extern crate crossbeam;
 extern crate classifier;
 extern crate select;
+extern crate time;
 
 use iron::prelude::*;
 use iron::status;
@@ -104,20 +105,26 @@ fn main() {
     }
 
     fn parse_it(_: &mut Request, c: & Client, nb : & Arc<Mutex<NaiveBayes>>) -> IronResult<Response> {
-        let mut res = c.get("http://streeteasy.com/for-rent/nyc/price:3500-4500%7Carea:115,116,107,105,157,364,322,304%7Cbeds:2%7Cinterestingatint%3E1469787712").send().unwrap();
+        let current_time = time::get_time().sec;
+        let one_day = 86164;
+        let yesterday = (current_time - one_day).to_string();
+
+        // homepage for every given day
+        let mut url = "http://streeteasy.com/for-rent/nyc/price:3500-4500%7Carea:115,116,107,105,157,364,322,304%7Cbeds:2%7Cinterestingatint%3E".to_string();
+        url.push_str(&*yesterday);
+
+
+
+        let mut res = c.get(&*url).send().unwrap();
         assert_eq!(res.status, hyper::Ok);
 
-        let mut hrefs : Vec<String> = Vec::new();
 
         let mut s = String::new();
         res.read_to_string(&mut s).unwrap();
 
         let document = Document::from(&*s);
 
-        for node in document.find(Class("details-title")).iter() {
-            let a = node.find(Name("a")).first().unwrap().attr("href").unwrap().to_string();
-            hrefs.push(a);
-        }
+        let hrefs = hit_all_pages(&url, c);
 
         let nb = nb.lock().unwrap();
         let results = webber(c, hrefs, &nb);
@@ -126,6 +133,55 @@ fn main() {
         let payload = json::encode(&greeting).unwrap();
         Ok(Response::with((status::Ok, payload)))
 
+    }
+
+    fn hit_all_pages(url: &str, c: & Client) -> Vec<String> {
+        let mut hrefs : Vec<String> = Vec::new();
+
+        for (index, value) in (0..9).enumerate() {
+            let current_page = (index + 1).to_string();
+            let mut pagination = "?page=".to_string();
+
+            pagination.push_str(&current_page);
+            let mut new_url = url.to_string();
+            new_url.push_str(&pagination);
+
+            let mut res = c.get(&*new_url).send().unwrap();
+
+            assert_eq!(res.status, hyper::Ok);
+
+            let mut s = String::new();
+            res.read_to_string(&mut s).unwrap();
+            let document = Document::from(&*s);
+            let mut listings = get_listings_on_page(document);
+
+            for link in &listings{
+                if link.contains("?featured=1"){
+                    let v: Vec<&str> = link.split("?").collect();
+                    if !hrefs.iter().any(|x| x == v[0]){
+                        &hrefs.push(v[0].to_string());
+                    }
+                } else {
+                    &hrefs.push(link.to_string());
+                }
+            }
+        }
+
+        for stuff in &hrefs {
+            println!("{}", stuff);
+        }
+        return hrefs;
+    }
+
+    fn get_listings_on_page(doc: Document) -> Vec<String> {
+        let mut hrefs : Vec<String> = Vec::new();
+
+        for node in doc.find(Class("details-title")).iter() {
+            let a = node.find(Name("a")).first().unwrap().attr("href").unwrap().to_string();
+            hrefs.push(a);
+        }
+
+        return hrefs;
     }
 
     fn webber(c: & Client, apartments: Vec<String>, nb : & NaiveBayes) -> Vec<String> {
