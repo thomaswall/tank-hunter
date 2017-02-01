@@ -138,30 +138,40 @@ fn main() {
     fn hit_all_pages(url: &str, c: & Client) -> Vec<String> {
         let mut hrefs : Vec<String> = Vec::new();
 
+        let (tx, rx) = mpsc::channel();
+
         for (index, value) in (0..9).enumerate() {
-            let current_page = (index + 1).to_string();
-            let mut pagination = "?page=".to_string();
+            let tx = tx.clone();
+            let x = c.clone();
 
-            pagination.push_str(&current_page);
-            let mut new_url = url.to_string();
-            new_url.push_str(&pagination);
+            crossbeam::scope(|scope| {
+                scope.spawn(move || {
+                    let current_page = (index + 1).to_string();
+                    let mut pagination = "?page=".to_string();
+                    pagination.push_str(&current_page);
+                    let mut new_url = url.to_string();
+                    new_url.push_str(&pagination);
+                    let mut res = x.get(&*new_url).send().unwrap();
+                    let mut s = String::new();
+                    res.read_to_string(&mut s).unwrap();
+                    let document = Document::from(&*s);
+                    let mut listings = get_listings_on_page(document);
+                    tx.send(listings).unwrap();
+                });
+            });
+        }
 
-            let mut res = c.get(&*new_url).send().unwrap();
 
-            assert_eq!(res.status, hyper::Ok);
-
-            let mut s = String::new();
-            res.read_to_string(&mut s).unwrap();
-            let document = Document::from(&*s);
-            let mut listings = get_listings_on_page(document);
-
-            for link in &listings{
+        for (index, value) in (0..9).enumerate() {
+            let resp = rx.recv().unwrap();
+            for link in resp {
                 if link.contains("?featured=1"){
                     let v: Vec<&str> = link.split("?").collect();
                     if !hrefs.iter().any(|x| x == v[0]){
                         &hrefs.push(v[0].to_string());
                     }
-                } else {
+                }
+                else {
                     &hrefs.push(link.to_string());
                 }
             }
@@ -170,6 +180,7 @@ fn main() {
         for stuff in &hrefs {
             println!("{}", stuff);
         }
+
         return hrefs;
     }
 
