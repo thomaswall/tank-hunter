@@ -114,7 +114,6 @@ fn main() {
         url.push_str(&*yesterday);
 
 
-
         let mut res = c.get(&*url).send().unwrap();
         assert_eq!(res.status, hyper::Ok);
 
@@ -124,7 +123,17 @@ fn main() {
 
         let document = Document::from(&*s);
 
-        let hrefs = hit_all_pages(&url, c);
+        let mut paginations : Vec<String> = Vec::new();
+        for node in document.find(Class("page")).iter() {
+            if node.inner_html().len() > 10 {
+                paginations.push(node.find(Name("a")).first().unwrap().inner_html());
+            }
+        }
+
+        let ref last_index = paginations[paginations.len() - 1];
+        let number_of_pages: i32 = last_index.parse().unwrap();
+
+        let hrefs = hit_all_pages(&url, c, number_of_pages);
 
         let nb = nb.lock().unwrap();
         let results = webber(c, hrefs, &nb);
@@ -135,12 +144,12 @@ fn main() {
 
     }
 
-    fn hit_all_pages(url: &str, c: & Client) -> Vec<String> {
+    fn hit_all_pages(url: &str, c: & Client, max: i32) -> Vec<String> {
         let mut hrefs : Vec<String> = Vec::new();
 
         let (tx, rx) = mpsc::channel();
 
-        for (index, value) in (0..9).enumerate() {
+        for (index, value) in (0..max).enumerate() {
             let tx = tx.clone();
             let x = c.clone();
 
