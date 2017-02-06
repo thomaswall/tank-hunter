@@ -149,9 +149,10 @@ fn main() {
 
         let (tx, rx) = mpsc::channel();
 
+        println!("{}", url);
+
         for (index, value) in (0..max).enumerate() {
             let tx = tx.clone();
-            let x = c.clone();
 
             crossbeam::scope(|scope| {
                 scope.spawn(move || {
@@ -160,7 +161,7 @@ fn main() {
                     pagination.push_str(&current_page);
                     let mut new_url = url.to_string();
                     new_url.push_str(&pagination);
-                    let mut res = x.get(&*new_url).send().unwrap();
+                    let mut res = c.get(&*new_url).send().unwrap();
                     let mut s = String::new();
                     res.read_to_string(&mut s).unwrap();
                     let document = Document::from(&*s);
@@ -170,10 +171,11 @@ fn main() {
             });
         }
 
-
-        for (index, value) in (0..9).enumerate() {
+        for (index, value) in (0..max).enumerate() {
             let resp = rx.recv().unwrap();
+
             for link in resp {
+                // streeteasy does "featured" apts, which repeats
                 if link.contains("?featured=1"){
                     let v: Vec<&str> = link.split("?").collect();
                     if !hrefs.iter().any(|x| x == v[0]){
