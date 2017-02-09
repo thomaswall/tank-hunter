@@ -22,6 +22,8 @@ use std::fs::File;
 use std::io::Write;
 use select::document::Document;
 use select::predicate::{Predicate, Attr, Class, Name};
+use std::fs::OpenOptions;
+
 
 #[derive(RustcEncodable, RustcDecodable)]
 struct Greeting {
@@ -34,6 +36,20 @@ struct ApartmentUrl {
     label: String
 }
 
+#[derive(RustcEncodable, RustcDecodable)]
+struct CachedUrl {
+    url: String,
+    time: i64
+}
+
+impl PartialEq for CachedUrl {
+    fn eq(&self, other: &CachedUrl) -> bool {
+        self.url == other.url
+    }
+}
+
+impl Eq for CachedUrl {}
+
 unsafe impl Send for ApartmentUrl {}
 unsafe impl Sync for ApartmentUrl {}
 
@@ -42,8 +58,12 @@ struct Greetings<'a> {
     allMsgs: &'a Vec<String>
 }
 
-fn main() {
+#[derive(RustcEncodable)]
+pub struct JSON_CONTAINER {
+    all_apartments: Vec<u8>,
+}
 
+fn main() {
     let mut router = Router::new();
     let greeting = Arc::new(Mutex::new(Greeting { msg: "Hello, World".to_string() }));
     let greeting_clone = greeting.clone();
@@ -136,6 +156,7 @@ fn main() {
         let hrefs = hit_all_pages(&url, c, number_of_pages);
 
         let nb = nb.lock().unwrap();
+
         let results = webber(c, hrefs, &nb);
 
         let greeting = Greetings { allMsgs: &results };
@@ -145,7 +166,7 @@ fn main() {
     }
 
     fn hit_all_pages(url: &str, c: & Client, max: i32) -> Vec<String> {
-        let mut hrefs : Vec<String> = Vec::new();
+        let mut hrefs : Vec<CachedUrl> = Vec::new();
 
         let (tx, rx) = mpsc::channel();
 
@@ -175,24 +196,77 @@ fn main() {
             let resp = rx.recv().unwrap();
 
             for link in resp {
-                // streeteasy does "featured" apts, which repeats
                 if link.contains("?featured=1"){
                     let v: Vec<&str> = link.split("?").collect();
-                    if !hrefs.iter().any(|x| x == v[0]){
-                        &hrefs.push(v[0].to_string());
+
+                    if hrefs.iter().find(|ref mut x| x.url == v[0]) == None {
+                        let now_time = time::get_time().sec;
+                        let link_to_add = link.to_string();
+                        let new_href =  CachedUrl {url: link_to_add, time: now_time};
+                        &hrefs.push(new_href);
                     }
                 }
                 else {
-                    &hrefs.push(link.to_string());
+                    let curr_time = time::get_time().sec;
+                    let new_addition = CachedUrl {url: link.to_string() , time: curr_time};
+                    &hrefs.push(new_addition);
                 }
             }
         }
 
-        for stuff in &hrefs {
-            println!("{}", stuff);
-        }
+        let mut s = String::new();
 
-        return hrefs;
+        let mut f = OpenOptions::new()
+                        .read(true)
+                        .append(false)
+                        .write(true)
+                        .open("bar.json").unwrap();
+
+        f.read_to_string(&mut s);
+        let mut the_apts : Vec<CachedUrl> = json::decode(&s).unwrap();
+
+        for stuff in hrefs {
+            if the_apts.iter().find(|ref mut x| x.url == stuff.url) == None {
+            let new_time = time::get_time().sec;
+            the_apts.push(stuff);
+        }
+    }
+
+    write_in_array( &the_apts);
+
+    let mut st = String::new();
+    let mut ft = OpenOptions::new()
+                        .read(true)
+                        .append(false)
+                        .write(true)
+                        .open("bar.json").unwrap();
+
+    ft.read_to_string(&mut st);
+
+    let mut all_links : Vec<CachedUrl> = json::decode(&st).unwrap();
+    let mut list_of_links : Vec<String> = Vec::new();
+
+    for one_link in all_links {
+        let one_day = 86400;
+        let current = time::get_time().sec;
+
+        if one_link.time > current - one_day {
+            list_of_links.push(one_link.url);
+        }
+    }
+
+    return list_of_links;
+}
+
+fn write_in_array(json_stuff: &Vec<CachedUrl>) {
+    let jsons = json::encode(&json_stuff).unwrap();
+
+    let mut f = OpenOptions::new()
+                    .write(true)
+                    .append(false)
+                    .open("bar.json").unwrap();
+
+        f.write(jsons.as_bytes());
     }
 
     fn get_listings_on_page(doc: Document) -> Vec<String> {
@@ -202,7 +276,6 @@ fn main() {
             let a = node.find(Name("a")).first().unwrap().attr("href").unwrap().to_string();
             hrefs.push(a);
         }
-
         return hrefs;
     }
 
@@ -235,7 +308,6 @@ fn main() {
     fn goGetEm(c: &Client, extension: String, nb: NaiveBayes) -> String {
         let url = Url::parse("http://streeteasy.com").unwrap();
         let url = url.join(&*extension).unwrap();
-
         let mut res = c.get(url.as_str()).send().unwrap();
         assert_eq!(res.status, hyper::Ok);
         let mut s = String::new();
