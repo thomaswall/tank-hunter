@@ -85,11 +85,23 @@ fn main() {
     let atx = Arc::new(Mutex::new(tx));
     let nb2 = nb.clone();
 
+    let training_client = Client::new();
     thread::spawn(move || {
         while true {
             let update : ApartmentUrl = rx.recv().unwrap();
             let mut nb2 = nb2.lock().unwrap();
-            nb2.add_document(&update.url.to_string(), &update.label.to_string());
+
+            let mut res = training_client.get(&update.url.to_string()).send().unwrap();
+            assert_eq!(res.status, hyper::Ok);
+            let mut s = String::new();
+            res.read_to_string(&mut s).unwrap();
+
+            let document = Document::from(&*s);
+
+            let block = document.find(Class("listings_sections")).first().unwrap();
+            let body = block.find(Name("blockquote")).first().unwrap().text();
+
+            nb2.add_document(&body, &update.label.to_string());
             nb2.train();
 
             let trained_content = nb2.to_json();
