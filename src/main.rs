@@ -67,7 +67,6 @@ fn main() {
     let mut router = Router::new();
     let greeting = Arc::new(Mutex::new(Greeting { msg: "Hello, World".to_string() }));
     let greeting_clone = greeting.clone();
-    let client = Client::new();
 
     let mut model = String::new();
     let mut nb = Arc::new(Mutex::new(NaiveBayes::new()));
@@ -85,9 +84,9 @@ fn main() {
     let atx = Arc::new(Mutex::new(tx));
     let nb2 = nb.clone();
 
-    let training_client = Client::new();
     thread::spawn(move || {
         while true {
+            let training_client = Client::new();
             let update : ApartmentUrl = rx.recv().unwrap();
             let mut nb2 = nb2.lock().unwrap();
 
@@ -121,7 +120,7 @@ fn main() {
     router.post("/set", move |r: &mut Request| set_greeting(r, &mut greeting_clone.lock().unwrap()), "set");
     router.get("/learn", move |r: &mut Request| learn(r), "learn");
     router.post("/train", move |r: &mut Request| train(r, &atx), "train");
-    router.get("/parseit", move |r: &mut Request| parse_it(r, &client, &nb3), "parse");
+    router.get("/parseit", move |r: &mut Request| parse_it(r, &nb3), "parse");
 
 
     fn hello_world(_ : &mut Request, greeting: &Greeting) -> IronResult<Response> {
@@ -136,7 +135,8 @@ fn main() {
         Ok(Response::with((status::Ok, payload)))
     }
 
-    fn parse_it(_: &mut Request, c: & Client, nb : & Arc<Mutex<NaiveBayes>>) -> IronResult<Response> {
+    fn parse_it(_: &mut Request, nb : & Arc<Mutex<NaiveBayes>>) -> IronResult<Response> {
+        let c = Client::new();
         let current_time = time::get_time().sec;
         let one_day = 86164;
         let yesterday = (current_time - one_day).to_string();
@@ -165,11 +165,11 @@ fn main() {
         let ref last_index = paginations[paginations.len() - 1];
         let number_of_pages: i32 = last_index.parse().unwrap();
 
-        let hrefs = hit_all_pages(&url, c, number_of_pages);
+        let hrefs = hit_all_pages(&url, number_of_pages);
 
         let nb = nb.lock().unwrap();
 
-        let results = webber(c, hrefs, &nb);
+        let results = webber(hrefs, &nb);
 
         let greeting = Greetings { allMsgs: &results };
         let payload = json::encode(&greeting).unwrap();
@@ -177,7 +177,7 @@ fn main() {
 
     }
 
-    fn hit_all_pages(url: &str, c: & Client, max: i32) -> Vec<String> {
+    fn hit_all_pages(url: &str, max: i32) -> Vec<String> {
         let mut hrefs : Vec<CachedUrl> = Vec::new();
 
         let (tx, rx) = mpsc::channel();
@@ -189,6 +189,7 @@ fn main() {
 
             crossbeam::scope(|scope| {
                 scope.spawn(move || {
+                    let c = Client::new();
                     let current_page = (index + 1).to_string();
                     let mut pagination = "?page=".to_string();
                     pagination.push_str(&current_page);
@@ -291,7 +292,8 @@ fn write_in_array(json_stuff: &Vec<CachedUrl>) {
         return hrefs;
     }
 
-    fn webber(c: & Client, apartments: Vec<String>, nb : & NaiveBayes) -> Vec<String> {
+    fn webber(apartments: Vec<String>, nb : & NaiveBayes) -> Vec<String> {
+
 
         let (tx, rx) = mpsc::channel();
         for apt in apartments.clone() {
@@ -299,7 +301,7 @@ fn write_in_array(json_stuff: &Vec<CachedUrl>) {
             let nb2 = nb.clone();
             crossbeam::scope(|scope| {
                 scope.spawn(move || {
-                    let result = goGetEm(c, apt, nb2);
+                    let result = goGetEm(apt, nb2);
                     tx.send(result).unwrap();
                 });
             });
@@ -317,7 +319,8 @@ fn write_in_array(json_stuff: &Vec<CachedUrl>) {
         return data;
     }
 
-    fn goGetEm(c: &Client, extension: String, nb: NaiveBayes) -> String {
+    fn goGetEm(extension: String, nb: NaiveBayes) -> String {
+        let c = Client::new();
         let url = Url::parse("http://streeteasy.com").unwrap();
         let url = url.join(&*extension).unwrap();
         let mut res = c.get(url.as_str()).send().unwrap();
@@ -381,7 +384,7 @@ fn write_in_array(json_stuff: &Vec<CachedUrl>) {
         Ok(Response::with((status::Ok, payload)))
     }
 
-    Iron::new(router).http("localhost:3000").unwrap();
+    Iron::new(router).http("127.0.0.1:3000").unwrap();
     println!("On 3000");
 
 
