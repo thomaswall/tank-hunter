@@ -19,6 +19,7 @@ use std::thread;
 use std::sync::mpsc;
 use std::fs::File;
 use std::io::Write;
+use std::net::*;
 use select::document::Document;
 use select::predicate::{Predicate, Attr, Class, Name};
 
@@ -170,8 +171,8 @@ fn main() {
         let payload = json::encode(&greeting).unwrap();
         Ok(Response::with((status::Ok, payload)))
     }
-
-    Iron::new(router).http("localhost:3000").unwrap();
+    let host = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 3000);
+    Iron::new(router).http(host).unwrap();
     println!("On 3000");
 
 
